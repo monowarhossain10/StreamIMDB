@@ -1,0 +1,6 @@
+{
+  "name": "StreamIMDb TV",
+  "description": "Android TV movie streaming app for StreamIMDb with TV remote D-Pad navigation, virtual mouse, and remote phone control.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

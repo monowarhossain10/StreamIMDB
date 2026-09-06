@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">StreamIMDb TV</string>
+    <string name="tv_banner_desc">StreamIMDb TV Movie Streaming</string>
+    <string name="remote_mode_cursor">Cursor Mode</string>
+    <string name="remote_mode_dpad">D-Pad Mode</string>
+    <string name="phone_remote_title">Phone Remote Control</string>
+    <string name="search_hint">Search movie, series, or IMDb ID (e.g. tt1375666)…</string>
+    <string name="history_title">Watch History</string>
+    <string name="bookmarks_title">Saved Favorites</string>
+    <string name="ad_blocker_active">Ad &amp; Pop-up Shield Active</string>
+</resources>
