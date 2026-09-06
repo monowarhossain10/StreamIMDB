@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
@@ -39,16 +40,23 @@ class WebSocketServer(
         if (serverJob != null) return
         serverJob = scope.launch {
             try {
-                serverSocket = ServerSocket(port)
+                serverSocket = ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(port))
+                }
                 Log.d("WebSocketServer", "WebSocket Server listening on port $port")
                 while (isActive && serverSocket?.isClosed == false) {
-                    val client = serverSocket?.accept() ?: break
+                    val client = try {
+                        serverSocket?.accept()
+                    } catch (_: Exception) {
+                        null
+                    } ?: break
                     launch(Dispatchers.IO) {
                         handleClient(client)
                     }
                 }
             } catch (e: Exception) {
-                Log.e("WebSocketServer", "Server error", e)
+                Log.w("WebSocketServer", "WebSocket server stopped or port unavailable: ${e.message}")
             }
         }
     }

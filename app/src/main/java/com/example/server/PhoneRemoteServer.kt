@@ -15,6 +15,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStream
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
@@ -47,16 +48,23 @@ class PhoneRemoteServer(
         if (serverJob != null) return
         serverJob = scope.launch {
             try {
-                serverSocket = ServerSocket(httpPort)
+                serverSocket = ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(httpPort))
+                }
                 Log.d("PhoneRemoteServer", "HTTP Server started on port $httpPort")
                 while (isActive && serverSocket?.isClosed == false) {
-                    val client = serverSocket?.accept() ?: break
+                    val client = try {
+                        serverSocket?.accept()
+                    } catch (_: Exception) {
+                        null
+                    } ?: break
                     launch(Dispatchers.IO) {
                         handleClient(client)
                     }
                 }
             } catch (e: Exception) {
-                Log.e("PhoneRemoteServer", "Server error", e)
+                Log.w("PhoneRemoteServer", "HTTP server stopped or port unavailable: ${e.message}")
             }
         }
     }
@@ -145,6 +153,8 @@ class PhoneRemoteServer(
                     sendResponse(out, 200, "text/html; charset=UTF-8", getRemoteHtml())
                 } else if (method == "GET" && (path == "/download" || path == "/apk" || path == "/StreamIMDb-TV.apk" || path == "/app-debug.apk")) {
                     sendApkResponse(out)
+                } else if (method == "GET" && (path == "/logo.jpg" || path == "/logo.png" || path == "/favicon.ico")) {
+                    sendLogoResponse(out)
                 } else if (method == "POST" && path == "/api/key") {
                     val json = runCatching { JSONObject(body) }.getOrNull()
                     val key = json?.optString("key") ?: ""
@@ -232,6 +242,29 @@ class PhoneRemoteServer(
             out.flush()
         } else {
             sendResponse(out, 404, "text/plain", "APK download currently not available.")
+        }
+    }
+
+    private fun sendLogoResponse(out: OutputStream) {
+        val logoFile = File("/app/applet/app/src/main/res/drawable/ic_streamimdb_logo.jpg").takeIf { it.exists() }
+            ?: File("app/src/main/res/drawable/ic_streamimdb_logo.jpg").takeIf { it.exists() }
+            ?: File("public/streamimdb_logo.jpg").takeIf { it.exists() }
+
+        if (logoFile != null && logoFile.exists()) {
+            val length = logoFile.length()
+            val header = "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type: image/jpeg\r\n" +
+                    "Content-Length: $length\r\n" +
+                    "Cache-Control: public, max-age=86400\r\n" +
+                    "Access-Control-Allow-Origin: *\r\n" +
+                    "Connection: close\r\n\r\n"
+            out.write(header.toByteArray(Charsets.UTF_8))
+            logoFile.inputStream().use { input ->
+                input.copyTo(out)
+            }
+            out.flush()
+        } else {
+            sendResponse(out, 404, "text/plain", "Logo not found")
         }
     }
 
@@ -484,9 +517,12 @@ class PhoneRemoteServer(
 <body>
 
 <header>
-  <div class="brand">
-    <span>🎬 StreamIMDb</span>
-    <span class="badge">TV</span>
+  <div class="brand" style="display:flex; align-items:center; gap:10px;">
+    <img src="/logo.jpg" alt="StreamIMDb" style="width:38px; height:38px; border-radius:8px; object-fit:cover; border:1px solid #30363d; box-shadow:0 2px 8px rgba(0,0,0,0.5);" />
+    <div style="display:flex; align-items:center; gap:4px;">
+      <span style="color:#ffffff; font-weight:900; font-size:1.1rem; letter-spacing:0.5px;">STREAM</span><span style="color:#f5c518; font-weight:900; font-size:1.1rem; letter-spacing:0.5px;">IMDB</span>
+      <span class="badge" style="margin-left:4px;">TV</span>
+    </div>
   </div>
   <div id="ws-status" class="status-badge">
     <div id="ws-dot" class="dot connecting"></div>

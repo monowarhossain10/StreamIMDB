@@ -1,4 +1,8 @@
-# 🎬 StreamIMDb TV for Android TV
+# <img src="public/streamimdb_logo.jpg" width="48" height="48" style="vertical-align: middle; border-radius: 10px;" alt="StreamIMDb Logo"/> StreamIMDb TV for Android TV
+
+<p align="center">
+  <img src="public/streamimdb_logo.jpg" width="180" height="180" style="border-radius: 28px; box-shadow: 0 8px 32px rgba(0,0,0,0.6);" alt="StreamIMDb App Icon" />
+</p>
 
 [![Android TV](https://img.shields.io/badge/Platform-Android%20TV-00897B?logo=android&logoColor=white)](https://github.com/hmonowar32/StreamIMDB)
 [![Kotlin](https://img.shields.io/badge/Language-Kotlin-7F52FF?logo=kotlin&logoColor=white)](https://kotlinlang.org/)

@@ -3,6 +3,7 @@ package com.example.ui.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,12 +24,14 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.PlaylistAddCheck
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shield
@@ -47,10 +50,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.R
 import com.example.tv.CursorSpeed
 import com.example.tv.StreamWebController
 import com.example.tv.VirtualCursorController
@@ -70,9 +76,13 @@ fun TvHeaderOverlay(
     onOpenSearch: () -> Unit,
     onVoiceSearch: () -> Unit,
     onOpenBookmarks: () -> Unit,
+    onOpenWatchlist: () -> Unit,
+    watchlistCount: Int = 0,
     onOpenPhoneRemote: () -> Unit,
     onToggleBookmark: () -> Unit,
     isCurrentBookmarked: Boolean,
+    onToggleRecentlyWatched: () -> Unit = {},
+    recentlyWatchedCount: Int = 0,
     modifier: Modifier = Modifier
 ) {
     var isExpanded by remember { mutableStateOf(true) }
@@ -111,18 +121,33 @@ fun TvHeaderOverlay(
                 ) {
                     // Left Brand & Navigation
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(ImdbGold)
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CinemaSurface)
                                 .clickable { webController.goHome() }
-                                .testTag("brand_logo"),
-                            contentAlignment = Alignment.Center
+                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                                .testTag("brand_logo")
                         ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.ic_streamimdb_logo),
+                                contentDescription = "StreamIMDb Logo",
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(RoundedCornerShape(6.dp)),
+                                contentScale = ContentScale.Fit
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "STREAMIMDB",
-                                color = Color.Black,
+                                text = "STREAM",
+                                color = Color.White,
+                                fontWeight = FontWeight.Black,
+                                fontSize = 13.sp
+                            )
+                            Text(
+                                text = "IMDB",
+                                color = ImdbGold,
                                 fontWeight = FontWeight.Black,
                                 fontSize = 13.sp
                             )
@@ -205,6 +230,82 @@ fun TvHeaderOverlay(
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
+                            }
+                        }
+
+                        // Watchlist (Room Database) Button
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (watchlistCount > 0) CinemaSurfaceVariant else CinemaSurface)
+                                .clickable { onOpenWatchlist() }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .testTag("header_watchlist_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.PlaylistAddCheck, contentDescription = "Watchlist", tint = ImdbGold, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Watchlist",
+                                    color = CinemaTextPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (watchlistCount > 0) {
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .background(CinemaRed)
+                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            text = "$watchlistCount",
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Recently Watched Toggle Button
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CinemaSurfaceVariant)
+                                .clickable { onToggleRecentlyWatched() }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .testTag("header_recent_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.History, contentDescription = "Recently Watched", tint = ImdbGold, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Recent",
+                                    color = CinemaTextPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (recentlyWatchedCount > 0) {
+                                    Spacer(modifier = Modifier.width(5.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .background(CinemaSurface)
+                                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    ) {
+                                        Text(
+                                            text = "$recentlyWatchedCount",
+                                            color = CinemaTextSecondary,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
                             }
                         }
 

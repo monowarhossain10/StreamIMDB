@@ -23,12 +23,14 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import com.example.data.WatchRepository
+import com.example.data.WatchlistRepository
 import com.example.server.PhoneRemoteServer
 import com.example.server.RemoteActionListener
 import com.example.server.WebSocketCommandListener
@@ -39,8 +41,10 @@ import com.example.tv.VirtualCursorController
 import com.example.ui.components.BookmarksHistoryDialog
 import com.example.ui.components.PhoneRemoteDialog
 import com.example.ui.components.QuickSearchDialog
+import com.example.ui.components.RecentlyWatchedShelf
 import com.example.ui.components.TvHeaderOverlay
 import com.example.ui.components.VirtualCursorOverlay
+import com.example.ui.components.WatchlistMenuOverlay
 import com.example.ui.theme.CinemaDarkBackground
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.delay
@@ -51,11 +55,14 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
     private lateinit var webController: StreamWebController
     private val cursorController = VirtualCursorController()
     private lateinit var watchRepository: WatchRepository
+    private lateinit var watchlistRepository: WatchlistRepository
     private var phoneRemoteServer: PhoneRemoteServer? = null
     private var webSocketServer: WebSocketServer? = null
     private lateinit var fullscreenContainer: FrameLayout
     private var audioManager: AudioManager? = null
     private var isSearchDialogVisible by mutableStateOf(false)
+    private var isWatchlistOverlayVisible by mutableStateOf(false)
+    private var isBookmarksDialogVisible by mutableStateOf(false)
 
     // Android TV Voice Search Contract
     private val voiceSearchLauncher = registerForActivityResult(
@@ -82,6 +89,7 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
         audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         webController = StreamWebController(this)
         watchRepository = WatchRepository(this)
+        watchlistRepository = WatchlistRepository(this)
 
         // Hold branded splash screen while initial WebView engine loads
         var keepSplashOnScreen = true
@@ -118,8 +126,10 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
             MyApplicationTheme {
                 val bookmarks by watchRepository.bookmarks.collectAsState()
                 val history by watchRepository.history.collectAsState()
+                val watchlist by watchlistRepository.watchlist.collectAsState(initial = emptyList())
+                val watchlistCount by watchlistRepository.count.collectAsState(initial = 0)
+                val isCurrentInWatchlist by watchlistRepository.observeIsWatchlisted(webController.currentUrl).collectAsState(initial = false)
 
-                var showBookmarksDialog by remember { mutableStateOf(false) }
                 var showPhoneRemoteDialog by remember { mutableStateOf(false) }
 
                 Box(
@@ -157,7 +167,9 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
                             phoneServerUrl = phoneRemoteServer?.getServerUrl() ?: "",
                             onOpenSearch = { isSearchDialogVisible = true },
                             onVoiceSearch = { launchVoiceSearch() },
-                            onOpenBookmarks = { showBookmarksDialog = true },
+                            onOpenBookmarks = { isBookmarksDialogVisible = true },
+                            onOpenWatchlist = { isWatchlistOverlayVisible = true },
+                            watchlistCount = watchlistCount,
                             onOpenPhoneRemote = { showPhoneRemoteDialog = true },
                             onToggleBookmark = {
                                 watchRepository.toggleBookmark(
@@ -165,13 +177,59 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
                                     webController.currentUrl
                                 )
                             },
-                            isCurrentBookmarked = watchRepository.isBookmarked(webController.currentUrl)
+                            isCurrentBookmarked = watchRepository.isBookmarked(webController.currentUrl),
+                            onToggleRecentlyWatched = {
+                                // Toggle recently watched shelf
+                            },
+                            recentlyWatchedCount = minOf(history.size, 10)
                         )
                     }
 
                     // On-screen Virtual Cursor Pointer (active when cursor mode is enabled)
                     if (!webController.isFullscreenVideo) {
                         VirtualCursorOverlay(controller = cursorController)
+                    }
+
+                    // Recently Watched Shelf (Last 10 Played Movies)
+                    if (!webController.isFullscreenVideo && !isWatchlistOverlayVisible && !isSearchDialogVisible && !isBookmarksDialogVisible) {
+                        RecentlyWatchedShelf(
+                            history = history,
+                            onSelectMovie = { url ->
+                                webController.loadUrl(url)
+                            },
+                            onAddToWatchlist = { item ->
+                                lifecycleScope.launch {
+                                    watchlistRepository.addToWatchlist(item.title, item.url, item.imdbId)
+                                    Toast.makeText(this@MainActivity, "Saved to Watchlist", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.align(Alignment.BottomCenter)
+                        )
+                    }
+
+                    // Custom Menu Overlay: Room-backed Watchlist
+                    if (isWatchlistOverlayVisible) {
+                        WatchlistMenuOverlay(
+                            watchlist = watchlist,
+                            currentTitle = webController.currentTitle,
+                            currentUrl = webController.currentUrl,
+                            isCurrentInWatchlist = isCurrentInWatchlist,
+                            onSelectMovie = { url ->
+                                webController.loadUrl(url)
+                            },
+                            onRemoveFromWatchlist = { id ->
+                                lifecycleScope.launch {
+                                    watchlistRepository.removeFromWatchlist(id)
+                                }
+                            },
+                            onAddCurrentToWatchlist = {
+                                lifecycleScope.launch {
+                                    watchlistRepository.addToWatchlist(webController.currentTitle, webController.currentUrl)
+                                    Toast.makeText(this@MainActivity, "Saved to Watchlist", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            onDismiss = { isWatchlistOverlayVisible = false }
+                        )
                     }
 
                     // Dialogs
@@ -187,14 +245,14 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
                         )
                     }
 
-                    if (showBookmarksDialog) {
+                    if (isBookmarksDialogVisible) {
                         BookmarksHistoryDialog(
                             history = history,
                             bookmarks = bookmarks,
                             onSelectUrl = { url ->
                                 webController.loadUrl(url)
                             },
-                            onDismiss = { showBookmarksDialog = false }
+                            onDismiss = { isBookmarksDialogVisible = false }
                         )
                     }
 
@@ -210,10 +268,21 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        webController.webView?.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        webController.webView?.onResume()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         phoneRemoteServer?.stop()
         webSocketServer?.stop()
+        webController.destroy()
     }
 
     // --- Android TV Search & Voice Search Integration ---
@@ -259,11 +328,40 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
         }
     }
 
-    // --- Android TV Physical Remote Key Handling ---
+    // --- Physical Keyboard and Android TV Remote Key Handling ---
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
             val webView = webController.webView
             val step = if (event.repeatCount > 0) 35f else 22f
+
+            // 1. Physical Keyboard Space Key: Play/Pause video (only when user is not typing in search dialog)
+            if (event.keyCode == KeyEvent.KEYCODE_SPACE && !isSearchDialogVisible) {
+                webController.playPauseVideo()
+                return true
+            }
+
+            // 2. Physical Keyboard Escape / TV Back Key handling with overlay dismissal
+            if (event.keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                if (isWatchlistOverlayVisible) {
+                    isWatchlistOverlayVisible = false
+                    return true
+                }
+                if (isBookmarksDialogVisible) {
+                    isBookmarksDialogVisible = false
+                    return true
+                }
+                if (isSearchDialogVisible) {
+                    isSearchDialogVisible = false
+                    return true
+                }
+                if (webController.isFullscreenVideo) {
+                    webController.exitFullscreenVideo()
+                    return true
+                }
+                if (webController.goBack()) {
+                    return true
+                }
+            }
 
             // Mode 1: Virtual Cursor Mode (mouse pointer emulation)
             if (cursorController.isCursorMode) {
@@ -284,7 +382,9 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
                         cursorController.move(step, 0f, webView)
                         return true
                     }
-                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                    KeyEvent.KEYCODE_DPAD_CENTER,
+                    KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                         if (webView != null) {
                             cursorController.performClick(webView)
                             return true
@@ -295,7 +395,9 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
                 // Mode 2: D-Pad Native Focus Navigation Mode
                 // Direct arrow navigation to move highlight across links, movie cards, and player controls
                 when (event.keyCode) {
-                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                    KeyEvent.KEYCODE_DPAD_CENTER,
+                    KeyEvent.KEYCODE_ENTER,
+                    KeyEvent.KEYCODE_NUMPAD_ENTER -> {
                         webController.clickFocusedElement()
                         webView?.dispatchKeyEvent(event)
                         return true
@@ -307,7 +409,69 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
                         if (webView != null) {
                             val handled = webView.dispatchKeyEvent(event)
                             if (handled) return true
+                            // If unhandled by web view focus, smoothly scroll for physical keyboard arrows
+                            when (event.keyCode) {
+                                KeyEvent.KEYCODE_DPAD_UP -> webView.scrollBy(0, -120)
+                                KeyEvent.KEYCODE_DPAD_DOWN -> webView.scrollBy(0, 120)
+                                KeyEvent.KEYCODE_DPAD_LEFT -> webView.scrollBy(-120, 0)
+                                KeyEvent.KEYCODE_DPAD_RIGHT -> webView.scrollBy(120, 0)
+                            }
+                            return true
                         }
+                    }
+                }
+            }
+
+            // Page Up / Down navigation
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_PAGE_UP -> {
+                    webView?.pageUp(false)
+                    return true
+                }
+                KeyEvent.KEYCODE_PAGE_DOWN -> {
+                    webView?.pageDown(false)
+                    return true
+                }
+            }
+
+            // Physical Keyboard Media & Convenience Hotkeys (when search input is not active)
+            if (!isSearchDialogVisible) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_W -> {
+                        isWatchlistOverlayVisible = !isWatchlistOverlayVisible
+                        return true
+                    }
+                    KeyEvent.KEYCODE_F -> {
+                        webController.toggleFullscreenVideo()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_M -> {
+                        onVolumeCommand("mute")
+                        return true
+                    }
+                    KeyEvent.KEYCODE_K -> {
+                        webController.playPauseVideo()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_J, KeyEvent.KEYCODE_LEFT_BRACKET -> {
+                        webController.seekRelative(-10)
+                        return true
+                    }
+                    KeyEvent.KEYCODE_L, KeyEvent.KEYCODE_RIGHT_BRACKET -> {
+                        webController.seekRelative(10)
+                        return true
+                    }
+                    KeyEvent.KEYCODE_C -> {
+                        cursorController.toggleMode()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_PLUS, KeyEvent.KEYCODE_EQUALS -> {
+                        onVolumeCommand("up")
+                        return true
+                    }
+                    KeyEvent.KEYCODE_MINUS -> {
+                        onVolumeCommand("down")
+                        return true
                     }
                 }
             }
@@ -355,6 +519,22 @@ class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommand
                     return true
                 }
                 KeyEvent.KEYCODE_BACK -> {
+                    if (isWatchlistOverlayVisible) {
+                        isWatchlistOverlayVisible = false
+                        return true
+                    }
+                    if (isBookmarksDialogVisible) {
+                        isBookmarksDialogVisible = false
+                        return true
+                    }
+                    if (isSearchDialogVisible) {
+                        isSearchDialogVisible = false
+                        return true
+                    }
+                    if (webController.isFullscreenVideo) {
+                        webController.exitFullscreenVideo()
+                        return true
+                    }
                     if (webController.goBack()) {
                         return true
                     }

@@ -6,7 +6,9 @@ import android.graphics.Bitmap
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
@@ -212,6 +214,19 @@ class StreamWebController(val context: Context) {
         """.trimIndent()
         webView?.evaluateJavascript(js, null)
     }
+
+    fun destroy() {
+        try {
+            webView?.let { wv ->
+                wv.stopLoading()
+                wv.loadUrl("about:blank")
+                wv.clearHistory()
+                wv.removeAllViews()
+                wv.destroy()
+            }
+        } catch (_: Exception) {}
+        webView = null
+    }
 }
 
 // Known ad and tracker host fragments commonly encountered on video streaming portals
@@ -241,6 +256,12 @@ fun StreamTvWebView(
                     )
 
                     controller.webView = this
+
+                    // In virtualized cloud / emulator environments lacking DRM rendernodes (/dev/dri/renderD128),
+                    // setting the software layer suppresses MESA rendernode errors and prevents renderer crashes.
+                    try {
+                        setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                    } catch (_: Exception) {}
 
                     // Focus handling setup for TV remote D-Pad navigation
                     isFocusable = true
@@ -373,6 +394,21 @@ fun StreamTvWebView(
                                         var obs = new MutationObserver(makeElementsFocusable);
                                         obs.observe(document.body, { childList: true, subtree: true });
                                     } catch(e) {}
+
+                                    // Guard WebGL context creation to prevent Mesa driver rendernode crashes
+                                    try {
+                                        if (window.HTMLCanvasElement) {
+                                            var originalGetContext = HTMLCanvasElement.prototype.getContext;
+                                            HTMLCanvasElement.prototype.getContext = function(type, attributes) {
+                                                try {
+                                                    return originalGetContext.apply(this, arguments);
+                                                } catch(err) {
+                                                    console.warn('Canvas context fallback:', err);
+                                                    return null;
+                                                }
+                                            };
+                                        }
+                                    } catch(e) {}
                                 })();
                             """.trimIndent()
                             view?.evaluateJavascript(tvFocusAndCleanCss, null)
@@ -416,6 +452,28 @@ fun StreamTvWebView(
                                 return WebResourceResponse("text/plain", "UTF-8", null)
                             }
                             return super.shouldInterceptRequest(view, request)
+                        }
+
+                        override fun onRenderProcessGone(
+                            view: WebView?,
+                            detail: RenderProcessGoneDetail?
+                        ): Boolean {
+                            view?.let { wv ->
+                                (wv.parent as? ViewGroup)?.removeView(wv)
+                                wv.destroy()
+                            }
+                            return true
+                        }
+
+                        override fun onReceivedError(
+                            view: WebView?,
+                            request: WebResourceRequest?,
+                            error: WebResourceError?
+                        ) {
+                            super.onReceivedError(view, request, error)
+                            if (request?.isForMainFrame == true) {
+                                controller.isLoading = false
+                            }
                         }
                     }
 

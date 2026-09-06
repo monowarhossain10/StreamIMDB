@@ -40,9 +40,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import com.example.R
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -85,28 +88,36 @@ fun PhoneRemoteDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_streamimdb_logo),
+                            contentDescription = "StreamIMDb Logo",
                             modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(CinemaRed),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PhoneAndroid,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Fit
+                        )
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text(
-                                text = "Control TV From Mobile App",
-                                color = CinemaTextPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 18.sp
-                            )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "STREAM",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 18.sp
+                                )
+                                Text(
+                                    text = "IMDB",
+                                    color = ImdbGold,
+                                    fontWeight = FontWeight.Black,
+                                    fontSize = 18.sp
+                                )
+                                Text(
+                                    text = " Mobile Remote",
+                                    color = CinemaTextPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 18.sp
+                                )
+                            }
                             Text(
                                 text = "WebSocket Server & Web Remote Companion",
                                 color = CinemaTextSecondary,

@@ -1,25 +1,13 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="320dp"
-    android:height="180dp"
-    android:viewportWidth="320"
-    android:viewportHeight="180">
-    <!-- TV Banner Background -->
-    <path
-        android:fillColor="#0D1117"
-        android:pathData="M0,0h320v180h-320z" />
-    <path
-        android:fillColor="#1F2937"
-        android:pathData="M0,0 L320,180 L0,180 Z" />
-    <!-- Gradient / accent accent -->
-    <path
-        android:fillColor="#E50914"
-        android:pathData="M24,24 h8 v132 h-8 z" />
-    <!-- TV icon / Cinema film reel symbol -->
-    <path
-        android:fillColor="#F5C518"
-        android:pathData="M60,60 h48 v36 h-48 z M64,64 h16 v12 h-16 z M88,64 h16 v12 h-16 z M64,80 h16 v12 h-16 z M88,80 h16 v12 h-16 z" />
-    <!-- Play triangle -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M130,65 L170,90 L130,115 Z" />
-</vector>
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#0B0F19" />
+        </shape>
+    </item>
+    <item
+        android:width="120dp"
+        android:height="120dp"
+        android:gravity="center"
+        android:drawable="@drawable/ic_streamimdb_vector" />
+</layer-list>
