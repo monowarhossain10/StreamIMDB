@@ -1,13 +1,20 @@
 package com.example
 
+import android.app.SearchManager
+import android.content.Context
+import android.content.Intent
+import android.media.AudioManager
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -19,9 +26,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.lifecycleScope
 import com.example.data.WatchRepository
 import com.example.server.PhoneRemoteServer
 import com.example.server.RemoteActionListener
+import com.example.server.WebSocketCommandListener
+import com.example.server.WebSocketServer
 import com.example.tv.StreamTvWebView
 import com.example.tv.StreamWebController
 import com.example.tv.VirtualCursorController
@@ -32,23 +43,58 @@ import com.example.ui.components.TvHeaderOverlay
 import com.example.ui.components.VirtualCursorOverlay
 import com.example.ui.theme.CinemaDarkBackground
 import com.example.ui.theme.MyApplicationTheme
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity(), RemoteActionListener {
+class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommandListener {
 
     private lateinit var webController: StreamWebController
     private val cursorController = VirtualCursorController()
     private lateinit var watchRepository: WatchRepository
     private var phoneRemoteServer: PhoneRemoteServer? = null
+    private var webSocketServer: WebSocketServer? = null
     private lateinit var fullscreenContainer: FrameLayout
+    private var audioManager: AudioManager? = null
+    private var isSearchDialogVisible by mutableStateOf(false)
+
+    // Android TV Voice Search Contract
+    private val voiceSearchLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == RESULT_OK) {
+            val matches = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            val spokenQuery = matches?.firstOrNull()?.trim()
+            if (!spokenQuery.isNullOrBlank()) {
+                Toast.makeText(this, "Voice Search: \"$spokenQuery\"", Toast.LENGTH_SHORT).show()
+                webController.loadUrl(spokenQuery)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 1. Android SplashScreen API - branded cinema startup experience
+        val splashScreen = installSplashScreen()
         super.onCreate(savedInstanceState)
 
         // Keep TV screen awake during movie playback
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         webController = StreamWebController(this)
         watchRepository = WatchRepository(this)
+
+        // Hold branded splash screen while initial WebView engine loads
+        var keepSplashOnScreen = true
+        lifecycleScope.launch {
+            val startTime = System.currentTimeMillis()
+            while (webController.isInitialLoading && System.currentTimeMillis() - startTime < 2500) {
+                delay(50)
+            }
+            keepSplashOnScreen = false
+        }
+        splashScreen.setKeepOnScreenCondition { keepSplashOnScreen }
+
+        handleSearchIntent(intent)
 
         fullscreenContainer = FrameLayout(this).apply {
             layoutParams = ViewGroup.LayoutParams(
@@ -58,8 +104,13 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
             visibility = View.GONE
         }
 
-        // Initialize and start micro HTTP server for remote phone controller
-        phoneRemoteServer = PhoneRemoteServer(this, 8088, this).apply {
+        // Initialize and start micro HTTP server for phone companion web client (port 8088)
+        phoneRemoteServer = PhoneRemoteServer(this, httpPort = 8088, wsPort = 8089, listener = this).apply {
+            start()
+        }
+
+        // Initialize and start WebSocket server for mobile phone apps and real-time remote commands (port 8089)
+        webSocketServer = WebSocketServer(port = 8089, listener = this).apply {
             start()
         }
 
@@ -68,7 +119,6 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
                 val bookmarks by watchRepository.bookmarks.collectAsState()
                 val history by watchRepository.history.collectAsState()
 
-                var showSearchDialog by remember { mutableStateOf(false) }
                 var showBookmarksDialog by remember { mutableStateOf(false) }
                 var showPhoneRemoteDialog by remember { mutableStateOf(false) }
 
@@ -83,7 +133,7 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
                             )
                         }
                 ) {
-                    // Main Movie Stream WebView
+                    // Main Movie Stream WebView (with Material Design Progress Indicator and TV Focus Handling)
                     StreamTvWebView(
                         modifier = Modifier.fillMaxSize(),
                         controller = webController,
@@ -105,7 +155,8 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
                             webController = webController,
                             cursorController = cursorController,
                             phoneServerUrl = phoneRemoteServer?.getServerUrl() ?: "",
-                            onOpenSearch = { showSearchDialog = true },
+                            onOpenSearch = { isSearchDialogVisible = true },
+                            onVoiceSearch = { launchVoiceSearch() },
                             onOpenBookmarks = { showBookmarksDialog = true },
                             onOpenPhoneRemote = { showPhoneRemoteDialog = true },
                             onToggleBookmark = {
@@ -118,17 +169,20 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
                         )
                     }
 
-                    // On-screen Virtual Cursor Pointer
+                    // On-screen Virtual Cursor Pointer (active when cursor mode is enabled)
                     if (!webController.isFullscreenVideo) {
                         VirtualCursorOverlay(controller = cursorController)
                     }
 
                     // Dialogs
-                    if (showSearchDialog) {
+                    if (isSearchDialogVisible) {
                         QuickSearchDialog(
-                            onDismiss = { showSearchDialog = false },
+                            onDismiss = { isSearchDialogVisible = false },
                             onSelectUrl = { url ->
                                 webController.loadUrl(url)
+                            },
+                            onStartVoiceSearch = {
+                                launchVoiceSearch()
                             }
                         )
                     }
@@ -147,6 +201,7 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
                     if (showPhoneRemoteDialog) {
                         PhoneRemoteDialog(
                             serverUrl = phoneRemoteServer?.getServerUrl() ?: "http://127.0.0.1:8088",
+                            wsUrl = phoneRemoteServer?.getWebSocketUrl() ?: "ws://127.0.0.1:8089",
                             onDismiss = { showPhoneRemoteDialog = false }
                         )
                     }
@@ -158,6 +213,50 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
     override fun onDestroy() {
         super.onDestroy()
         phoneRemoteServer?.stop()
+        webSocketServer?.stop()
+    }
+
+    // --- Android TV Search & Voice Search Integration ---
+    /**
+     * Triggered when the user presses the search / microphone button on the Android TV remote.
+     */
+    override fun onSearchRequested(): Boolean {
+        launchVoiceSearch()
+        return true
+    }
+
+    /**
+     * Launches the speech recognition dialog allowing users to speak movie titles
+     * using the TV remote's built-in microphone.
+     */
+    fun launchVoiceSearch() {
+        try {
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_PROMPT, getString(R.string.voice_search_prompt))
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            }
+            voiceSearchLauncher.launch(intent)
+        } catch (_: Exception) {
+            // Fallback to text search dialog if voice recognition service is not present
+            isSearchDialogVisible = true
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleSearchIntent(intent)
+    }
+
+    private fun handleSearchIntent(intent: Intent?) {
+        if (intent == null) return
+        if (Intent.ACTION_SEARCH == intent.action) {
+            val query = intent.getStringExtra(SearchManager.QUERY)
+            if (!query.isNullOrBlank()) {
+                webController.loadUrl(query)
+            }
+        }
     }
 
     // --- Android TV Physical Remote Key Handling ---
@@ -166,6 +265,7 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
             val webView = webController.webView
             val step = if (event.repeatCount > 0) 35f else 22f
 
+            // Mode 1: Virtual Cursor Mode (mouse pointer emulation)
             if (cursorController.isCursorMode) {
                 when (event.keyCode) {
                     KeyEvent.KEYCODE_DPAD_UP -> {
@@ -191,8 +291,38 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
                         }
                     }
                 }
+            } else {
+                // Mode 2: D-Pad Native Focus Navigation Mode
+                // Direct arrow navigation to move highlight across links, movie cards, and player controls
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                        webController.clickFocusedElement()
+                        webView?.dispatchKeyEvent(event)
+                        return true
+                    }
+                    KeyEvent.KEYCODE_DPAD_UP,
+                    KeyEvent.KEYCODE_DPAD_DOWN,
+                    KeyEvent.KEYCODE_DPAD_LEFT,
+                    KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                        if (webView != null) {
+                            val handled = webView.dispatchKeyEvent(event)
+                            if (handled) return true
+                        }
+                    }
+                }
             }
 
+            // TV Remote Voice & Search Keys
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_SEARCH,
+                KeyEvent.KEYCODE_VOICE_ASSIST,
+                KeyEvent.KEYCODE_ASSIST -> {
+                    onSearchRequested()
+                    return true
+                }
+            }
+
+            // Media & System Keys
             when (event.keyCode) {
                 KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
                 KeyEvent.KEYCODE_MEDIA_PLAY,
@@ -206,6 +336,18 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
                 }
                 KeyEvent.KEYCODE_MEDIA_REWIND -> {
                     webController.seekRelative(-10)
+                    return true
+                }
+                KeyEvent.KEYCODE_VOLUME_UP -> {
+                    onVolumeCommand("up")
+                    return true
+                }
+                KeyEvent.KEYCODE_VOLUME_DOWN -> {
+                    onVolumeCommand("down")
+                    return true
+                }
+                KeyEvent.KEYCODE_VOLUME_MUTE -> {
+                    onVolumeCommand("mute")
                     return true
                 }
                 KeyEvent.KEYCODE_MENU -> {
@@ -222,25 +364,111 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
         return super.dispatchKeyEvent(event)
     }
 
-    // --- RemoteActionListener implementation (from Phone Web Remote) ---
-    override fun onDpadKey(key: String) {
+    // --- WebSocketCommandListener implementation (Real-Time WebSocket Server) ---
+    override fun onPlaybackCommand(action: String) {
+        when (action.lowercase()) {
+            "play", "pause", "play_pause", "toggle_play" -> webController.playPauseVideo()
+            "forward", "seek_forward", "fast_forward" -> webController.seekRelative(10)
+            "rewind", "seek_rewind" -> webController.seekRelative(-10)
+            "fullscreen" -> webController.toggleFullscreenVideo()
+        }
+    }
+
+    override fun onVolumeCommand(action: String) {
+        try {
+            when (action.lowercase()) {
+                "up", "raise" -> {
+                    audioManager?.adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_RAISE,
+                        AudioManager.FLAG_SHOW_UI
+                    )
+                }
+                "down", "lower" -> {
+                    audioManager?.adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_LOWER,
+                        AudioManager.FLAG_SHOW_UI
+                    )
+                }
+                "mute", "toggle_mute" -> {
+                    audioManager?.adjustStreamVolume(
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.ADJUST_TOGGLE_MUTE,
+                        AudioManager.FLAG_SHOW_UI
+                    )
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    override fun onNavigationCommand(action: String, value: String?) {
         val webView = webController.webView
-        when (key) {
-            "up" -> cursorController.move(0f, -35f, webView)
-            "down" -> cursorController.move(0f, 35f, webView)
-            "left" -> cursorController.move(-35f, 0f, webView)
-            "right" -> cursorController.move(35f, 0f, webView)
-            "enter" -> webView?.let { cursorController.performClick(it) }
+        when (action.lowercase()) {
+            "load_url" -> value?.let { webController.loadUrl(it) }
+            "search" -> value?.let { webController.loadUrl(it) }
+            "voice_search", "mic", "voice" -> launchVoiceSearch()
+            "up" -> {
+                if (cursorController.isCursorMode) {
+                    cursorController.move(0f, -35f, webView)
+                } else {
+                    webView?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_UP))
+                    webView?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_UP))
+                }
+            }
+            "down" -> {
+                if (cursorController.isCursorMode) {
+                    cursorController.move(0f, 35f, webView)
+                } else {
+                    webView?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_DOWN))
+                    webView?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_DOWN))
+                }
+            }
+            "left" -> {
+                if (cursorController.isCursorMode) {
+                    cursorController.move(-35f, 0f, webView)
+                } else {
+                    webView?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT))
+                    webView?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT))
+                }
+            }
+            "right" -> {
+                if (cursorController.isCursorMode) {
+                    cursorController.move(35f, 0f, webView)
+                } else {
+                    webView?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT))
+                    webView?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT))
+                }
+            }
+            "enter", "select", "ok" -> {
+                if (cursorController.isCursorMode) {
+                    webView?.let { cursorController.performClick(it) }
+                } else {
+                    webController.clickFocusedElement()
+                    webView?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER))
+                    webView?.dispatchKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER))
+                }
+            }
             "back" -> webController.goBack()
             "home" -> webController.goHome()
-            "play" -> webController.playPauseVideo()
-            "forward" -> webController.seekRelative(10)
-            "rewind" -> webController.seekRelative(-10)
-            "fullscreen" -> webController.toggleFullscreenVideo()
+            "menu" -> cursorController.toggleMode()
             "zoom_in" -> webController.setZoom((webController.textZoom + 25).coerceAtMost(200))
             "zoom_out" -> webController.setZoom((webController.textZoom - 25).coerceAtLeast(75))
-            "menu" -> cursorController.toggleMode()
         }
+    }
+
+    override fun onMouseCommand(action: String, dx: Float, dy: Float) {
+        val webView = webController.webView
+        when (action) {
+            "move" -> cursorController.move(dx, dy, webView)
+            "click" -> webView?.let { cursorController.performClick(it) }
+            "scroll" -> webController.scrollBy(0, dy.toInt())
+        }
+    }
+
+    // --- RemoteActionListener implementation (from Phone HTTP / Companion) ---
+    override fun onDpadKey(key: String) {
+        onNavigationCommand(key, null)
     }
 
     override fun onMouseMove(dx: Float, dy: Float) {
@@ -261,5 +489,17 @@ class MainActivity : ComponentActivity(), RemoteActionListener {
 
     override fun onSearchQuery(query: String) {
         webController.loadUrl(query)
+    }
+
+    override fun onVolumeAction(action: String) {
+        onVolumeCommand(action)
+    }
+
+    override fun onPlaybackAction(action: String) {
+        onPlaybackCommand(action)
+    }
+
+    override fun onVoiceSearchAction() {
+        launchVoiceSearch()
     }
 }

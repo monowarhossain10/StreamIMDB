@@ -1,0 +1,43 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="288dp"
+    android:height="288dp"
+    android:viewportWidth="288"
+    android:viewportHeight="288">
+
+    <!-- Cinema Dark Background Badge -->
+    <path
+        android:fillColor="#161B22"
+        android:pathData="M144,24 C210.274,24 264,77.726 264,144 C264,210.274 210.274,264 144,264 C77.726,264 24,210.274 24,144 C24,77.726 77.726,24 144,24 Z" />
+
+    <!-- Gold Outer Glow Ring -->
+    <path
+        android:strokeColor="#F5C518"
+        android:strokeWidth="6"
+        android:pathData="M144,30 C206.96,30 258,81.04 258,144 C258,206.96 206.96,258 144,258 C81.04,258 30,206.96 30,144 C30,81.04 81.04,30 144,30 Z" />
+
+    <!-- Cinema Red Clapperboard Top -->
+    <path
+        android:fillColor="#E50914"
+        android:pathData="M76,92 L212,92 L202,126 L66,126 Z" />
+
+    <!-- White Stripes on Clapperboard -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M98,92 L112,92 L96,126 L82,126 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M136,92 L150,92 L134,126 L120,126 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M174,92 L188,92 L172,126 L158,126 Z" />
+
+    <!-- Screen / Slate Box -->
+    <path
+        android:fillColor="#21262D"
+        android:pathData="M66,132 L212,132 L212,204 L66,204 Z" />
+
+    <!-- Golden Play Triangle -->
+    <path
+        android:fillColor="#F5C518"
+        android:pathData="M126,146 L168,168 L126,190 Z" />
+</vector>

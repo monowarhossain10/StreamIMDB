@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Mouse
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
@@ -67,6 +68,7 @@ fun TvHeaderOverlay(
     cursorController: VirtualCursorController,
     phoneServerUrl: String,
     onOpenSearch: () -> Unit,
+    onVoiceSearch: () -> Unit,
     onOpenBookmarks: () -> Unit,
     onOpenPhoneRemote: () -> Unit,
     onToggleBookmark: () -> Unit,
@@ -162,6 +164,28 @@ fun TvHeaderOverlay(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        // Voice Search Button
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(CinemaRed)
+                                .clickable { onVoiceSearch() }
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                .testTag("header_voice_search_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Mic, contentDescription = "Voice Search", tint = Color.White, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "Voice Search",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
                         // Quick Search / IMDb ID Button
                         Box(
                             modifier = Modifier

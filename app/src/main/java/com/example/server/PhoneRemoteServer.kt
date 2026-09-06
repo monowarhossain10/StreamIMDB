@@ -14,7 +14,6 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStream
-import java.net.InetAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
@@ -27,11 +26,15 @@ interface RemoteActionListener {
     fun onMouseScroll(deltaY: Float)
     fun onLoadUrl(url: String)
     fun onSearchQuery(query: String)
+    fun onVolumeAction(action: String) // "up", "down", "mute"
+    fun onPlaybackAction(action: String) // "play", "pause", "play_pause", "forward", "rewind", "fullscreen"
+    fun onVoiceSearchAction()
 }
 
 class PhoneRemoteServer(
     private val context: Context,
-    private val port: Int = 8088,
+    private val httpPort: Int = 8088,
+    private val wsPort: Int = 8089,
     private val listener: RemoteActionListener
 ) {
     private val scope = CoroutineScope(Dispatchers.IO)
@@ -43,8 +46,8 @@ class PhoneRemoteServer(
         if (serverJob != null) return
         serverJob = scope.launch {
             try {
-                serverSocket = ServerSocket(port)
-                Log.d("PhoneRemoteServer", "Server started on port $port")
+                serverSocket = ServerSocket(httpPort)
+                Log.d("PhoneRemoteServer", "HTTP Server started on port $httpPort")
                 while (isActive && serverSocket?.isClosed == false) {
                     val client = serverSocket?.accept() ?: break
                     launch(Dispatchers.IO) {
@@ -95,7 +98,11 @@ class PhoneRemoteServer(
     }
 
     fun getServerUrl(): String {
-        return "http://${getLocalIpAddress()}:$port"
+        return "http://${getLocalIpAddress()}:$httpPort"
+    }
+
+    fun getWebSocketUrl(): String {
+        return "ws://${getLocalIpAddress()}:$wsPort"
     }
 
     private fun handleClient(socket: Socket) {
@@ -139,6 +146,19 @@ class PhoneRemoteServer(
                     val json = runCatching { JSONObject(body) }.getOrNull()
                     val key = json?.optString("key") ?: ""
                     mainHandler.post { listener.onDpadKey(key) }
+                    sendResponse(out, 200, "application/json", """{"status":"ok"}""")
+                } else if (method == "POST" && path == "/api/volume") {
+                    val json = runCatching { JSONObject(body) }.getOrNull()
+                    val action = json?.optString("action") ?: ""
+                    mainHandler.post { listener.onVolumeAction(action) }
+                    sendResponse(out, 200, "application/json", """{"status":"ok"}""")
+                } else if (method == "POST" && path == "/api/playback") {
+                    val json = runCatching { JSONObject(body) }.getOrNull()
+                    val action = json?.optString("action") ?: ""
+                    mainHandler.post { listener.onPlaybackAction(action) }
+                    sendResponse(out, 200, "application/json", """{"status":"ok"}""")
+                } else if (method == "POST" && path == "/api/voice") {
+                    mainHandler.post { listener.onVoiceSearchAction() }
                     sendResponse(out, 200, "application/json", """{"status":"ok"}""")
                 } else if (method == "POST" && path == "/api/mouse") {
                     val json = runCatching { JSONObject(body) }.getOrNull()
@@ -204,7 +224,7 @@ class PhoneRemoteServer(
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 16px;
+    padding: 14px;
     min-height: 100vh;
     user-select: none;
   }
@@ -214,32 +234,43 @@ class PhoneRemoteServer(
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     padding-bottom: 8px;
     border-bottom: 1px solid #21262d;
   }
-  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.1rem; }
-  .badge { background: #f5c518; color: #000; font-size: 0.75rem; padding: 2px 6px; border-radius: 4px; font-weight: 800; }
-  .status { font-size: 0.8rem; color: #3fb950; display: flex; align-items: center; gap: 4px; }
-  .dot { width: 8px; height: 8px; background: #3fb950; border-radius: 50%; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 1.05rem; }
+  .badge { background: #f5c518; color: #000; font-size: 0.72rem; padding: 2px 6px; border-radius: 4px; font-weight: 800; }
+  .status-badge {
+    font-size: 0.75rem;
+    padding: 4px 8px;
+    border-radius: 12px;
+    background: #1f2937;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; }
+  .dot.connecting { background: #f5c518; }
+  .dot.offline { background: #f85149; }
 
   .tabs {
     display: flex;
     width: 100%;
     max-width: 420px;
     background: #161b22;
-    border-radius: 12px;
-    padding: 4px;
-    margin-bottom: 12px;
+    border-radius: 10px;
+    padding: 3px;
+    margin-bottom: 10px;
   }
   .tab-btn {
     flex: 1;
-    padding: 10px;
+    padding: 9px;
     background: transparent;
     border: none;
     color: #8b949e;
     font-weight: 600;
-    font-size: 0.9rem;
+    font-size: 0.88rem;
     border-radius: 8px;
     cursor: pointer;
   }
@@ -252,25 +283,53 @@ class PhoneRemoteServer(
   .panel { display: none; width: 100%; max-width: 420px; flex-direction: column; align-items: center; }
   .panel.active { display: flex; }
 
+  /* Volume Controller Section */
+  .volume-card {
+    width: 100%;
+    max-width: 420px;
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .volume-label { font-size: 0.85rem; font-weight: 700; color: #8b949e; display: flex; align-items: center; gap: 6px; }
+  .volume-btn-group { display: flex; gap: 8px; }
+  .vol-btn {
+    background: #21262d;
+    border: 1px solid #30363d;
+    color: #f0f6fc;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-weight: 700;
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .vol-btn:active { background: #e50914; }
+
   /* D-Pad Controller */
   .dpad-container {
     position: relative;
-    width: 260px;
-    height: 260px;
+    width: 250px;
+    height: 250px;
     background: #161b22;
     border-radius: 50%;
     box-shadow: 0 8px 24px rgba(0,0,0,0.6), inset 0 2px 4px rgba(255,255,255,0.05);
     display: flex;
     align-items: center;
     justify-content: center;
-    margin: 16px 0;
+    margin: 10px 0;
   }
   .dpad-btn {
     position: absolute;
     background: #21262d;
     border: 1px solid #30363d;
     color: #f0f6fc;
-    font-size: 1.4rem;
+    font-size: 1.3rem;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -278,18 +337,18 @@ class PhoneRemoteServer(
     transition: background 0.1s, transform 0.1s;
   }
   .dpad-btn:active { background: #e50914; transform: scale(0.92); }
-  .dpad-up { top: 12px; left: 85px; width: 90px; height: 70px; border-radius: 45px 45px 12px 12px; }
-  .dpad-down { bottom: 12px; left: 85px; width: 90px; height: 70px; border-radius: 12px 12px 45px 45px; }
-  .dpad-left { left: 12px; top: 85px; width: 70px; height: 90px; border-radius: 45px 12px 12px 45px; }
-  .dpad-right { right: 12px; top: 85px; width: 70px; height: 90px; border-radius: 12px 45px 45px 12px; }
+  .dpad-up { top: 10px; left: 80px; width: 90px; height: 68px; border-radius: 45px 45px 12px 12px; }
+  .dpad-down { bottom: 10px; left: 80px; width: 90px; height: 68px; border-radius: 12px 12px 45px 45px; }
+  .dpad-left { left: 10px; top: 80px; width: 68px; height: 90px; border-radius: 45px 12px 12px 45px; }
+  .dpad-right { right: 10px; top: 80px; width: 68px; height: 90px; border-radius: 12px 45px 45px 12px; }
   .dpad-center {
-    width: 80px;
-    height: 80px;
+    width: 76px;
+    height: 76px;
     border-radius: 50%;
     background: #f5c518;
     color: #000;
     font-weight: 800;
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     z-index: 10;
     border: none;
     box-shadow: 0 4px 12px rgba(245,197,24,0.4);
@@ -299,7 +358,7 @@ class PhoneRemoteServer(
   /* Trackpad */
   .trackpad-box {
     width: 100%;
-    height: 280px;
+    height: 270px;
     background: #161b22;
     border: 2px dashed #30363d;
     border-radius: 16px;
@@ -308,9 +367,9 @@ class PhoneRemoteServer(
     align-items: center;
     justify-content: center;
     color: #8b949e;
-    font-size: 0.95rem;
+    font-size: 0.92rem;
     touch-action: none;
-    margin: 12px 0;
+    margin: 10px 0;
     position: relative;
   }
   .trackpad-box:active { border-color: #f5c518; }
@@ -319,18 +378,18 @@ class PhoneRemoteServer(
   .btn-row {
     display: flex;
     width: 100%;
-    gap: 10px;
-    margin-bottom: 12px;
+    gap: 8px;
+    margin-bottom: 10px;
     justify-content: center;
   }
   .control-btn {
     flex: 1;
-    padding: 14px 10px;
+    padding: 12px 8px;
     background: #21262d;
     border: 1px solid #30363d;
-    border-radius: 10px;
+    border-radius: 8px;
     color: #f0f6fc;
-    font-size: 1rem;
+    font-size: 0.95rem;
     font-weight: 600;
     cursor: pointer;
     display: flex;
@@ -348,9 +407,9 @@ class PhoneRemoteServer(
     width: 100%;
     background: #161b22;
     border: 1px solid #21262d;
-    border-radius: 14px;
+    border-radius: 12px;
     padding: 14px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
   }
   .input-label { font-size: 0.85rem; color: #8b949e; margin-bottom: 8px; font-weight: 600; }
   .input-group { display: flex; gap: 8px; }
@@ -399,13 +458,25 @@ class PhoneRemoteServer(
 <header>
   <div class="brand">
     <span>🎬 StreamIMDb</span>
-    <span class="badge">TV REMOTE</span>
+    <span class="badge">TV</span>
   </div>
-  <div class="status">
-    <div class="dot"></div>
-    <span>TV Connected</span>
+  <div id="ws-status" class="status-badge">
+    <div id="ws-dot" class="dot connecting"></div>
+    <span id="ws-text">Connecting WebSocket...</span>
   </div>
 </header>
+
+<!-- TV Volume Control Bar -->
+<div class="volume-card">
+  <div class="volume-label">
+    <span>🔊 TV Volume</span>
+  </div>
+  <div class="volume-btn-group">
+    <button class="vol-btn" onclick="sendVolume('down')">Vol –</button>
+    <button class="vol-btn" onclick="sendVolume('mute')">Mute 🔇</button>
+    <button class="vol-btn" onclick="sendVolume('up')">Vol +</button>
+  </div>
+</div>
 
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('dpad')">D-Pad</button>
@@ -416,17 +487,17 @@ class PhoneRemoteServer(
 <!-- D-Pad Panel -->
 <div id="dpad-panel" class="panel active">
   <div class="dpad-container">
-    <button class="dpad-btn dpad-up" onclick="sendKey('up')">▲</button>
-    <button class="dpad-btn dpad-left" onclick="sendKey('left')">◀</button>
-    <button class="dpad-btn dpad-right" onclick="sendKey('right')">▶</button>
-    <button class="dpad-btn dpad-down" onclick="sendKey('down')">▼</button>
-    <button class="dpad-center" onclick="sendKey('enter')">OK</button>
+    <button class="dpad-btn dpad-up" onclick="sendNavigation('up')">▲</button>
+    <button class="dpad-btn dpad-left" onclick="sendNavigation('left')">◀</button>
+    <button class="dpad-btn dpad-right" onclick="sendNavigation('right')">▶</button>
+    <button class="dpad-btn dpad-down" onclick="sendNavigation('down')">▼</button>
+    <button class="dpad-center" onclick="sendNavigation('enter')">OK</button>
   </div>
 
   <div class="btn-row">
-    <button class="control-btn" onclick="sendKey('back')">↩ Back</button>
-    <button class="control-btn" onclick="sendKey('home')">⌂ Home</button>
-    <button class="control-btn" onclick="sendKey('menu')">☰ Menu</button>
+    <button class="control-btn" onclick="sendNavigation('back')">↩ Back</button>
+    <button class="control-btn" onclick="sendNavigation('home')">⌂ Home</button>
+    <button class="control-btn" onclick="sendNavigation('menu')">☰ Menu</button>
   </div>
 </div>
 
@@ -452,85 +523,164 @@ class PhoneRemoteServer(
       <button class="submit-btn" onclick="sendMovie()">Watch</button>
     </div>
     <div class="quick-chips">
-      <span class="chip" onclick="quickWatch('tt1375666', 'Inception')">Inception</span>
-      <span class="chip" onclick="quickWatch('tt0816692', 'Interstellar')">Interstellar</span>
-      <span class="chip" onclick="quickWatch('tt0468569', 'The Dark Knight')">Dark Knight</span>
-      <span class="chip" onclick="quickWatch('tt15398776', 'Oppenheimer')">Oppenheimer</span>
-      <span class="chip" onclick="quickWatch('tt0499549', 'Avatar')">Avatar</span>
-      <span class="chip" onclick="quickWatch('tt1877830', 'The Batman')">The Batman</span>
+      <span class="chip" onclick="quickWatch('tt1375666')">Inception</span>
+      <span class="chip" onclick="quickWatch('tt0816692')">Interstellar</span>
+      <span class="chip" onclick="quickWatch('tt0468569')">Dark Knight</span>
+      <span class="chip" onclick="quickWatch('tt15398776')">Oppenheimer</span>
+      <span class="chip" onclick="quickWatch('tt0499549')">Avatar</span>
+      <span class="chip" onclick="quickWatch('tt1877830')">The Batman</span>
+    </div>
+    <div style="margin-top: 10px;">
+      <button class="control-btn red" style="width:100%; font-size:1rem; padding:10px; background: #e50914; color: #fff;" onclick="triggerVoiceSearch()">🎤 Speak with TV Remote / Voice Search</button>
     </div>
   </div>
 </div>
 
-<!-- Common Media Controls -->
-<div style="width: 100%; max-width: 420px; margin-top: 8px;">
+<!-- Playback Controls -->
+<div style="width: 100%; max-width: 420px; margin-top: 4px;">
   <div class="btn-row">
-    <button class="control-btn" onclick="sendKey('rewind')">⏪ -10s</button>
-    <button class="control-btn gold" onclick="sendKey('play')">⏯ Play / Pause</button>
-    <button class="control-btn" onclick="sendKey('forward')">+10s ⏩</button>
+    <button class="control-btn" onclick="sendPlayback('rewind')">⏪ -10s</button>
+    <button class="control-btn gold" onclick="sendPlayback('play_pause')">⏯ Play / Pause</button>
+    <button class="control-btn" onclick="sendPlayback('forward')">+10s ⏩</button>
   </div>
   <div class="btn-row">
-    <button class="control-btn" onclick="sendKey('fullscreen')">⛶ Fullscreen</button>
-    <button class="control-btn" onclick="sendKey('zoom_in')">🔍+ Zoom In</button>
-    <button class="control-btn" onclick="sendKey('zoom_out')">🔍- Zoom Out</button>
+    <button class="control-btn" onclick="sendPlayback('fullscreen')">⛶ Fullscreen</button>
+    <button class="control-btn" onclick="sendNavigation('zoom_in')">🔍+ Zoom</button>
+    <button class="control-btn" onclick="sendNavigation('zoom_out')">🔍- Zoom</button>
   </div>
 </div>
 
 <script>
-function sendKey(k) {
+// Local Network WebSocket Connection
+var ws = null;
+var wsPort = $wsPort;
+var wsConnected = false;
+
+function initWebSocket() {
+  var host = window.location.hostname || '127.0.0.1';
+  var wsUrl = 'ws://' + host + ':' + wsPort;
+  
+  try {
+    ws = new WebSocket(wsUrl);
+    
+    ws.onopen = function() {
+      wsConnected = true;
+      document.getElementById('ws-dot').className = 'dot';
+      document.getElementById('ws-text').innerText = 'WebSocket Connected';
+    };
+    
+    ws.onclose = function() {
+      wsConnected = false;
+      document.getElementById('ws-dot').className = 'dot offline';
+      document.getElementById('ws-text').innerText = 'Reconnecting WS...';
+      setTimeout(initWebSocket, 2000);
+    };
+    
+    ws.onerror = function() {
+      wsConnected = false;
+    };
+    
+    ws.onmessage = function(event) {
+      try {
+        var msg = JSON.parse(event.data);
+        console.log('WS Message:', msg);
+      } catch(e) {}
+    };
+  } catch(e) {
+    setTimeout(initWebSocket, 2000);
+  }
+}
+
+initWebSocket();
+
+function sendWsOrHttp(payload, httpUrl, httpBody) {
   if (navigator.vibrate) navigator.vibrate(20);
-  fetch('/api/key', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ key: k })
-  });
+  if (wsConnected && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(payload));
+  } else {
+    fetch(httpUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(httpBody)
+    });
+  }
+}
+
+function sendVolume(action) {
+  sendWsOrHttp(
+    { type: 'volume', action: action },
+    '/api/volume',
+    { action: action }
+  );
+}
+
+function sendPlayback(action) {
+  sendWsOrHttp(
+    { type: 'playback', action: action },
+    '/api/playback',
+    { action: action }
+  );
+}
+
+function sendNavigation(action) {
+  sendWsOrHttp(
+    { type: 'navigation', action: action },
+    '/api/key',
+    { key: action }
+  );
 }
 
 function sendMouseClick() {
-  if (navigator.vibrate) navigator.vibrate(25);
-  fetch('/api/mouse', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'click' })
-  });
+  sendWsOrHttp(
+    { type: 'mouse', action: 'click' },
+    '/api/mouse',
+    { action: 'click' }
+  );
 }
 
 function sendScroll(delta) {
-  fetch('/api/mouse', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'scroll', dy: delta })
-  });
+  sendWsOrHttp(
+    { type: 'mouse', action: 'scroll', dy: delta },
+    '/api/mouse',
+    { action: 'scroll', dy: delta }
+  );
 }
 
 function sendMovie() {
   var input = document.getElementById('movie-input').value.trim();
   if (!input) return;
-  if (navigator.vibrate) navigator.vibrate(30);
   if (input.toLowerCase().startsWith('tt') || input.toLowerCase().startsWith('http')) {
     var url = input.startsWith('http') ? input : ('https://streamimdb.ru/movie/' + input);
-    fetch('/api/load', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: url })
-    });
+    sendWsOrHttp(
+      { type: 'navigation', action: 'load_url', value: url },
+      '/api/load',
+      { url: url }
+    );
   } else {
-    fetch('/api/load', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ search: input })
-    });
+    sendWsOrHttp(
+      { type: 'navigation', action: 'search', value: input },
+      '/api/load',
+      { search: input }
+    );
   }
   document.getElementById('movie-input').value = '';
 }
 
-function quickWatch(imdbId, title) {
-  if (navigator.vibrate) navigator.vibrate(25);
-  fetch('/api/load', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url: 'https://streamimdb.ru/movie/' + imdbId })
-  });
+function quickWatch(imdbId) {
+  var url = 'https://streamimdb.ru/movie/' + imdbId;
+  sendWsOrHttp(
+    { type: 'navigation', action: 'load_url', value: url },
+    '/api/load',
+    { url: url }
+  );
+}
+
+function triggerVoiceSearch() {
+  sendWsOrHttp(
+    { type: 'navigation', action: 'voice_search' },
+    '/api/voice',
+    {}
+  );
 }
 
 function switchTab(tab) {
@@ -574,11 +724,11 @@ tp.addEventListener('touchmove', function(e) {
     var dy = (currentY - lastTouchY) * 2.2;
     if (Math.abs(dx) > 1 || Math.abs(dy) > 1) {
       touchMoved = true;
-      fetch('/api/mouse', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'move', dx: dx, dy: dy })
-      });
+      sendWsOrHttp(
+        { type: 'mouse', action: 'move', dx: dx, dy: dy },
+        '/api/mouse',
+        { action: 'move', dx: dx, dy: dy }
+      );
       lastTouchX = currentX;
       lastTouchY = currentY;
     }

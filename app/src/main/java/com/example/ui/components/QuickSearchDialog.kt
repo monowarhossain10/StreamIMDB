@@ -13,11 +13,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
@@ -70,7 +72,8 @@ val POPULAR_MOVIES = listOf(
 @Composable
 fun QuickSearchDialog(
     onDismiss: () -> Unit,
-    onSelectUrl: (String) -> Unit
+    onSelectUrl: (String) -> Unit,
+    onStartVoiceSearch: () -> Unit
 ) {
     var query by remember { mutableStateOf("") }
 
@@ -147,30 +150,98 @@ fun QuickSearchDialog(
                         unfocusedContainerColor = CinemaDarkBackground
                     ),
                     trailingIcon = {
-                        Button(
-                            onClick = {
-                                if (query.isNotBlank()) {
-                                    val target = if (query.lowercase().startsWith("tt")) {
-                                        "https://streamimdb.ru/movie/$query"
-                                    } else if (query.startsWith("http")) {
-                                        query
-                                    } else {
-                                        "https://streamimdb.ru/?s=" + java.net.URLEncoder.encode(query, "UTF-8")
-                                    }
-                                    onSelectUrl(target)
-                                    onDismiss()
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = CinemaRed),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .padding(end = 6.dp)
-                                .testTag("submit_search_button")
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(end = 4.dp)
                         ) {
-                            Text("Open", color = Color.White, fontWeight = FontWeight.Bold)
+                            IconButton(
+                                onClick = {
+                                    onDismiss()
+                                    onStartVoiceSearch()
+                                },
+                                modifier = Modifier.testTag("dialog_voice_search_mic_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Mic,
+                                    contentDescription = "Speak with TV remote",
+                                    tint = ImdbGold
+                                )
+                            }
+                            Button(
+                                onClick = {
+                                    if (query.isNotBlank()) {
+                                        val target = if (query.lowercase().startsWith("tt")) {
+                                            "https://streamimdb.ru/movie/$query"
+                                        } else if (query.startsWith("http")) {
+                                            query
+                                        } else {
+                                            "https://streamimdb.ru/?s=" + java.net.URLEncoder.encode(query, "UTF-8")
+                                        }
+                                        onSelectUrl(target)
+                                        onDismiss()
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = CinemaRed),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.testTag("submit_search_button")
+                            ) {
+                                Text("Open", color = Color.White, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Voice search banner button
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(CinemaDarkBackground)
+                        .border(1.dp, ImdbGold.copy(alpha = 0.5f), RoundedCornerShape(10.dp))
+                        .clickable {
+                            onDismiss()
+                            onStartVoiceSearch()
+                        }
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .testTag("dialog_voice_search_banner_button")
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = null,
+                                tint = CinemaRed,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "Speak to Search (TV Remote Mic)",
+                                    color = CinemaTextPrimary,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                                Text(
+                                    text = "Press mic button on remote or tap here to speak movie title",
+                                    color = CinemaTextSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                        Text(
+                            text = "START",
+                            color = ImdbGold,
+                            fontWeight = FontWeight.Black,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(20.dp))
 

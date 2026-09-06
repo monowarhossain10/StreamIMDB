@@ -8,4 +8,6 @@
     <string name="history_title">Watch History</string>
     <string name="bookmarks_title">Saved Favorites</string>
     <string name="ad_blocker_active">Ad &amp; Pop-up Shield Active</string>
+    <string name="voice_search_prompt">Speak movie title or IMDb ID to search…</string>
+    <string name="voice_search_title">Voice Search</string>
 </resources>
