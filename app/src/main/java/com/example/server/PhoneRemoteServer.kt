@@ -12,6 +12,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
 import java.io.InputStreamReader
 import java.io.OutputStream
 import java.net.NetworkInterface
@@ -142,6 +143,8 @@ class PhoneRemoteServer(
 
                 if (method == "GET" && (path == "/" || path.startsWith("/?"))) {
                     sendResponse(out, 200, "text/html; charset=UTF-8", getRemoteHtml())
+                } else if (method == "GET" && (path == "/download" || path == "/apk" || path == "/StreamIMDb-TV.apk" || path == "/app-debug.apk")) {
+                    sendApkResponse(out)
                 } else if (method == "POST" && path == "/api/key") {
                     val json = runCatching { JSONObject(body) }.getOrNull()
                     val key = json?.optString("key") ?: ""
@@ -205,6 +208,31 @@ class PhoneRemoteServer(
         out.write(header.toByteArray(Charsets.UTF_8))
         out.write(bytes)
         out.flush()
+    }
+
+    private fun sendApkResponse(out: OutputStream) {
+        val apkFile = File("/app/applet/public/StreamIMDb-TV.apk").takeIf { it.exists() }
+            ?: File("public/StreamIMDb-TV.apk").takeIf { it.exists() }
+            ?: File(".build-outputs/app-debug.apk").takeIf { it.exists() }
+            ?: File("app/build/outputs/apk/debug/app-debug.apk").takeIf { it.exists() }
+            ?: File(context.applicationInfo.sourceDir).takeIf { it.exists() }
+
+        if (apkFile != null && apkFile.exists()) {
+            val length = apkFile.length()
+            val header = "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type: application/vnd.android.package-archive\r\n" +
+                    "Content-Disposition: attachment; filename=\"StreamIMDb-TV.apk\"\r\n" +
+                    "Content-Length: $length\r\n" +
+                    "Access-Control-Allow-Origin: *\r\n" +
+                    "Connection: close\r\n\r\n"
+            out.write(header.toByteArray(Charsets.UTF_8))
+            apkFile.inputStream().use { input ->
+                input.copyTo(out)
+            }
+            out.flush()
+        } else {
+            sendResponse(out, 404, "text/plain", "APK download currently not available.")
+        }
     }
 
     private fun getRemoteHtml(): String {
@@ -547,6 +575,18 @@ class PhoneRemoteServer(
     <button class="control-btn" onclick="sendPlayback('fullscreen')">⛶ Fullscreen</button>
     <button class="control-btn" onclick="sendNavigation('zoom_in')">🔍+ Zoom</button>
     <button class="control-btn" onclick="sendNavigation('zoom_out')">🔍- Zoom</button>
+  </div>
+
+  <!-- Download APK & GitHub Links -->
+  <div style="margin-top: 14px; background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 12px; text-align: center;">
+    <div style="font-size: 0.8rem; color: #8b949e; margin-bottom: 8px; font-weight: 600;">STREAMIMDB REPOSITORY & APP DOWNLOAD</div>
+    <a href="/download" download="StreamIMDb-TV.apk" style="display: block; width: 100%; padding: 10px 0; background: #238636; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 0.95rem; margin-bottom: 8px;">
+      📲 Download TV App (StreamIMDb-TV.apk)
+    </a>
+    <div style="display: flex; justify-content: center; gap: 16px; font-size: 0.8rem;">
+      <a href="https://github.com/hmonowar32/StreamIMDB" target="_blank" style="color: #58a6ff; text-decoration: none;">★ GitHub Repository</a>
+      <a href="/download" style="color: #f5c518; text-decoration: none;">Direct APK Link</a>
+    </div>
   </div>
 </div>
 

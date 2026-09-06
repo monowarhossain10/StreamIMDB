@@ -192,6 +192,19 @@ fun PhoneRemoteDialog(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "📲 Download APK on phone or TV: $serverUrl/download",
+                        color = ImdbGold,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "GitHub: github.com/hmonowar32/StreamIMDB",
+                        color = CinemaTextSecondary,
+                        fontSize = 10.sp
+                    )
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
