@@ -3,9 +3,11 @@ package com.example.tv
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.Message
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
+import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -257,11 +259,10 @@ fun StreamTvWebView(
 
                     controller.webView = this
 
-                    // In virtualized cloud / emulator environments lacking DRM rendernodes (/dev/dri/renderD128),
-                    // setting the software layer suppresses MESA rendernode errors and prevents renderer crashes.
-                    try {
-                        setLayerType(View.LAYER_TYPE_SOFTWARE, null)
-                    } catch (_: Exception) {}
+                    // Allow cookies and third-party cookies (essential for Cloudflare Turnstile & verification challenges)
+                    val cookieManager = CookieManager.getInstance()
+                    cookieManager.setAcceptCookie(true)
+                    cookieManager.setAcceptThirdPartyCookies(this, true)
 
                     // Focus handling setup for TV remote D-Pad navigation
                     isFocusable = true
@@ -283,9 +284,12 @@ fun StreamTvWebView(
                         mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                         allowFileAccess = true
                         allowContentAccess = true
+                        javaScriptCanOpenWindowsAutomatically = true
+                        setSupportMultipleWindows(true)
 
-                        // Modern TV / Desktop User Agent so the site serves full-fledged player and layout
-                        userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 SmartTV"
+                        // Standard Chrome on Android User Agent (removing "; wv" prevents Cloudflare and Google from flagging it as a restricted headless bot)
+                        val defaultUa = WebSettings.getDefaultUserAgent(ctx)
+                        userAgentString = defaultUa.replace("; wv", "")
 
                         // Enable Android WebView TV spatial navigation
                         try {
@@ -298,9 +302,33 @@ fun StreamTvWebView(
                         override fun onProgressChanged(view: WebView?, newProgress: Int) {
                             controller.loadingProgress = newProgress
                             controller.isLoading = newProgress < 100
-                            if (newProgress >= 100) {
+                            if (newProgress >= 40) {
                                 controller.isInitialLoading = false
                             }
+                        }
+
+                        override fun onCreateWindow(
+                            view: WebView?,
+                            isDialog: Boolean,
+                            isUserGesture: Boolean,
+                            resultMsg: Message?
+                        ): Boolean {
+                            val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                            val popupWebView = WebView(view?.context ?: return false).apply {
+                                settings.javaScriptEnabled = true
+                                settings.domStorageEnabled = true
+                                CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                                webViewClient = object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(wv: WebView?, request: WebResourceRequest?): Boolean {
+                                        val url = request?.url?.toString() ?: return false
+                                        view?.loadUrl(url)
+                                        return true
+                                    }
+                                }
+                            }
+                            transport.webView = popupWebView
+                            resultMsg.sendToTarget()
+                            return true
                         }
 
                         override fun onReceivedTitle(view: WebView?, title: String?) {
@@ -371,8 +399,8 @@ fun StreamTvWebView(
                                                 border-radius: 6px !important;
                                             }
                                             
-                                            /* Ad cleanup */
-                                            .ad-banner, .popup-banner, [id*="banner"], [class*="banner-ad"] { display: none !important; }
+                                            /* Ad cleanup - targets only specific ad classes without hiding captcha confirmation banners */
+                                            .ad-banner, .popup-banner, .banner-ad, [class*="ad-container"], [class*="ad-wrapper"] { display: none !important; }
                                             body { overflow-x: hidden !important; }
                                         `;
                                         document.head.appendChild(style);
@@ -394,21 +422,6 @@ fun StreamTvWebView(
                                         var obs = new MutationObserver(makeElementsFocusable);
                                         obs.observe(document.body, { childList: true, subtree: true });
                                     } catch(e) {}
-
-                                    // Guard WebGL context creation to prevent Mesa driver rendernode crashes
-                                    try {
-                                        if (window.HTMLCanvasElement) {
-                                            var originalGetContext = HTMLCanvasElement.prototype.getContext;
-                                            HTMLCanvasElement.prototype.getContext = function(type, attributes) {
-                                                try {
-                                                    return originalGetContext.apply(this, arguments);
-                                                } catch(err) {
-                                                    console.warn('Canvas context fallback:', err);
-                                                    return null;
-                                                }
-                                            };
-                                        }
-                                    } catch(e) {}
                                 })();
                             """.trimIndent()
                             view?.evaluateJavascript(tvFocusAndCleanCss, null)
@@ -427,14 +440,18 @@ fun StreamTvWebView(
                                 return true // Suppress ad redirect
                             }
 
-                            // Allow legitimate navigation
+                            // Allow legitimate navigation & verification challenges (Cloudflare, reCAPTCHA, etc.)
                             if (host.contains("streamimdb") ||
                                 host.contains("vidapi") ||
                                 host.contains("vidsrc") ||
                                 host.contains("imdb.com") ||
                                 host.contains("tmdb.org") ||
                                 host.contains("google.com") ||
-                                host.contains("cloudflare.com")
+                                host.contains("cloudflare.com") ||
+                                host.contains("turnstile") ||
+                                host.contains("hcaptcha") ||
+                                host.contains("recaptcha") ||
+                                host.contains("gstatic")
                             ) {
                                 return false
                             }
@@ -447,6 +464,14 @@ fun StreamTvWebView(
                             request: WebResourceRequest?
                         ): WebResourceResponse? {
                             val host = request?.url?.host?.lowercase() ?: ""
+                            // Never block verification challenges or captcha providers
+                            if (host.contains("cloudflare") ||
+                                host.contains("turnstile") ||
+                                host.contains("captcha") ||
+                                host.contains("gstatic")
+                            ) {
+                                return super.shouldInterceptRequest(view, request)
+                            }
                             if (BLOCKED_HOST_PATTERNS.any { host.contains(it) }) {
                                 controller.blockedAdsCount++
                                 return WebResourceResponse("text/plain", "UTF-8", null)
@@ -459,8 +484,9 @@ fun StreamTvWebView(
                             detail: RenderProcessGoneDetail?
                         ): Boolean {
                             view?.let { wv ->
-                                (wv.parent as? ViewGroup)?.removeView(wv)
-                                wv.destroy()
+                                try {
+                                    wv.loadUrl(controller.currentUrl)
+                                } catch (_: Exception) {}
                             }
                             return true
                         }
@@ -485,9 +511,23 @@ fun StreamTvWebView(
             }
         )
 
-        // Material Design Progress Indicator Overlay for Initial Page Loading
+        // Slim top progress bar that shows page progress without obstructing verification challenges
+        if (controller.isLoading && controller.loadingProgress in 1..99) {
+            LinearProgressIndicator(
+                progress = { controller.loadingProgress / 100f },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(3.dp)
+                    .align(Alignment.TopCenter)
+                    .testTag("top_loading_progress_bar"),
+                color = ImdbGold,
+                trackColor = Color.Transparent
+            )
+        }
+
+        // Material Design Progress Indicator Overlay for Initial Splash (dismisses early so confirmation boxes appear immediately)
         AnimatedVisibility(
-            visible = controller.isInitialLoading || (controller.isLoading && controller.loadingProgress < 85),
+            visible = controller.isInitialLoading && controller.loadingProgress < 40,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.Center)

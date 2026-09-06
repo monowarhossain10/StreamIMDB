@@ -52,6 +52,16 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity(), RemoteActionListener, WebSocketCommandListener {
 
+    companion object {
+        init {
+            try {
+                android.system.Os.setenv("LIBGL_ALWAYS_SOFTWARE", "1", true)
+                android.system.Os.setenv("MESA_LOADER_DRIVER_OVERRIDE", "llvmpipe", true)
+                android.system.Os.setenv("GALLIUM_DRIVER", "llvmpipe", true)
+            } catch (_: Throwable) {}
+        }
+    }
+
     private lateinit var webController: StreamWebController
     private val cursorController = VirtualCursorController()
     private lateinit var watchRepository: WatchRepository
